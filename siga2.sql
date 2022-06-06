@@ -109,6 +109,7 @@ INSERT INTO faltas (codigo_disciplina, data) VALUES
 SELECT * FROM aluno
 SELECT * FROM disciplina
 DELETE aluno
+DELETE faltas
 
 --sistema para inserir nota
 
@@ -187,7 +188,7 @@ CREATE PROCEDURE sp_notas2 (@ra_aluno INT, @codigo_disciplina INT , @nota DECIMA
 		
 
 --sistema para inserir falta
-CREATE PROCEDURE sp_faltas (@ra_aluno INT, @codigo_disciplina INT, @data DATE,  @presenca VARCHAR(1), @saida VARCHAR(50) OUTPUT)
+CREATE PROCEDURE sp_falta (@ra_aluno INT, @codigo_disciplina INT, @data DATE,  @presenca VARCHAR(1), @inter BIT, @saida VARCHAR(50) OUTPUT)
 	AS
 		DECLARE @query VARCHAR(MAX), @erro VARCHAR(MAX), @dia_semana INT
 
@@ -212,19 +213,16 @@ CREATE PROCEDURE sp_faltas (@ra_aluno INT, @codigo_disciplina INT, @data DATE,  
 			SET @dia_semana = 6
 		END
 
-		IF ((SELECT DISTINCT 1 FROM faltas WHERE codigo_disciplina = @codigo_disciplina AND DATEPART(DW,@data) = @dia_semana AND ra_aluno IS NULL AND presenca IS NULL) = 1)
+		IF (DATEPART(DW,@data) = @dia_semana AND @inter = 0)
 		BEGIN
-			SET @query = 'UPDATE faltas SET ra_aluno = '+CAST(@ra_aluno AS VARCHAR(10))+', presenca = '+CAST(@presenca AS VARCHAR(1))+'
+			SET @query = 'UPDATE faltas SET presenca = '+CAST(@presenca AS VARCHAR(1))+'
 			WHERE codigo_disciplina = '+CAST(@codigo_disciplina AS VARCHAR(7))+''
 		END
-		ELSE IF ((SELECT DISTINCT 1 FROM faltas WHERE codigo_disciplina = @codigo_disciplina AND DATEPART(DW,@data) = @dia_semana AND ra_aluno IS  NOT NULL AND presenca IS NOT NULL) = 1)
+
+		IF (DATEPART(DW,@data) = @dia_semana AND @inter = 1)
 		BEGIN
 			SET @query = 'INSERT INTO faltas VALUES ('+CAST(@ra_aluno AS VARCHAR(10))+', '+CAST(@codigo_disciplina AS VARCHAR(7))+',
 			'''+CAST(@data AS VARCHAR(12))+''', '+CAST(@presenca AS VARCHAR(1))+')'
-		END
-		ELSE IF ((SELECT DISTINCT 1 FROM faltas WHERE codigo_disciplina = @codigo_disciplina AND DATEPART(DW,@data) = @dia_semana) IS NULL)
-		BEGIN
-			RAISERROR('não tem essa aula nesse dia', 16, 1)
 		END
 
 		EXEC @query
@@ -248,13 +246,13 @@ CREATE PROCEDURE sp_faltas (@ra_aluno INT, @codigo_disciplina INT, @data DATE,  
 		--DROP PROCEDURE sp_faltas
 		SELECT (DATEPART(DW,'06/06/2022' ))
 
-		DECLARE @out2 VARCHAR(50)
-		EXEC sp_faltas 1110482003, 4203010, '29/08/2022', 4, @out2 OUTPUT
-		PRINT @out2
+		DECLARE @out5 VARCHAR(50)
+		EXEC sp_falta 1110482003, 4203010, '06/06/2022', 2, 0, @out5 OUTPUT
+		PRINT @out5
 
 		SELECT SUM(CONVERT(INT, presenca)) FROM faltas WHERE ra_aluno = 1110482003 AND codigo_disciplina = 4203010
 
-		DROP PROCEDURE sp_faltas
+		DROP PROCEDURE sp_falta
 		SELECT * FROM faltas
 		DELETE faltas
 --
@@ -267,7 +265,8 @@ nota2					DECIMAL(7,2),
 nota3					DECIMAL(7,2),
 nota4					DECIMAL(7,2),
 media_final				DECIMAL(7,2),
-situacao				VARCHAR(50)
+situacao				VARCHAR(50),
+codigo_disciplina		INT
 )
 AS
 BEGIN
@@ -287,7 +286,7 @@ BEGIN
 
 	SELECT @num_aulas = num_aulas FROM disciplina WHERE disciplina.codigo = @codigo_disciplina
 
-	INSERT INTO @tabela SELECT aluno.ra, aluno.nome, 0, 0, 0, 0, 0, null 
+	INSERT INTO @tabela SELECT aluno.ra, aluno.nome, 0, 0, 0, 0, 0, null, @codigo_disciplina 
 	FROM aluno, notas, disciplina, avaliacao
 	WHERE aluno.ra = notas.ra_aluno
 		AND disciplina.codigo = notas.codigo_disciplina
@@ -370,7 +369,8 @@ BEGIN
 END
 
 --DROP FUNCTION fn_atribui_notas
-SELECT * FROM fn_atribui_notas(4203010)
+SELECT ra_aluno, nome_aluno, nota1, nota2, nota3, nota4, media_final, situacao FROM fn_atribui_notas(4203010)
+
 DROP FUNCTION fn_atribui_notas
 
 CREATE FUNCTION faltas_turma(@codigo_disciplina INT) 
@@ -397,7 +397,8 @@ CREATE FUNCTION faltas_turma(@codigo_disciplina INT)
 	data18 VARCHAR(4), 
 	data19 VARCHAR(4), 
 	data20 VARCHAR(4), 
-	total_faltas INT)
+	total_faltas INT,
+	codigo_disci INT)
 AS
 BEGIN
 	DECLARE @ra INT,
@@ -407,12 +408,13 @@ BEGIN
 			@num_aulas INT,
 			@inter1 INT,
 			@inter2 INT,
-			@inter3 VARCHAR(4)
+			@inter3 VARCHAR(4),
+			@inter4 INT
 
 	SELECT @num_aulas = num_aulas FROM disciplina WHERE disciplina.codigo = @codigo_disciplina
 		
 	INSERT INTO @tabela SELECT faltas.ra_aluno, aluno.nome, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
-	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, @num_aulas
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, @num_aulas, @codigo_disciplina
 		FROM aluno, disciplina, faltas
 		WHERE faltas.ra_aluno = aluno.ra
 			AND faltas.codigo_disciplina = disciplina.codigo
@@ -434,6 +436,7 @@ BEGIN
 	WHILE @@FETCH_STATUS = 0
 	BEGIN
 		SET @inter1 = 1
+		SET @inter4 = 0
 		SELECT @inter2 = COUNT(ra_aluno) FROM faltas WHERE ra_aluno = @ra
 		WHILE @inter1 <= @inter2 AND @@FETCH_STATUS = 0
 			BEGIN
@@ -441,18 +444,22 @@ BEGIN
 			IF @presenca = 0
 			BEGIN
 				SET @inter3 = 'FFFF'
+				SET @inter4 = @inter4 + 4
 			END
 			IF @presenca = 1
 			BEGIN
 				SET @inter3 = 'PFFF'
+				SET @inter4 = @inter4 + 3
 			END
 			IF @presenca = 2
 			BEGIN
 				SET @inter3 = 'PPFF'
+				SET @inter4 = @inter4 + 2
 			END
 			IF @presenca = 3
 			BEGIN
 				SET @inter3 = 'PPPF'
+				SET @inter4 = @inter4 + 1
 			END
 			IF @presenca = 4
 			BEGIN
@@ -539,7 +546,7 @@ BEGIN
 			BEGIN
 				UPDATE @tabela SET data20 = @inter3 WHERE ra_aluno = @ra
 			END
-			UPDATE @tabela SET total_faltas = total_faltas - @presenca WHERE RA_Aluno = @ra
+			UPDATE @tabela SET total_faltas =  @inter4 WHERE RA_Aluno = @ra
 			FETCH NEXT FROM c_faltas INTO @ra, @nome, @data, @presenca
 			SET @inter1 = @inter1 + 1
 			END
@@ -549,6 +556,7 @@ BEGIN
 
 END
 
-SELECT * FROM faltas_turma(4203010)
+SELECT ra_aluno, Nome_Aluno, data1, data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, data13, data14, data15, data16, data17, data18, data19, data20, total_faltas FROM faltas_turma(4203010)
+
 SELECT * FROM faltas
 DROP FUNCTION faltas_turma
